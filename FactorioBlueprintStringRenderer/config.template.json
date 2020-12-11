@@ -39,5 +39,5 @@
         "file": "log.txt"
     },
     "watchdog_interval_minutes": 1,
-    "factorio": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Factorio"
+    "factorio": "D:\\factorio\\1.0.0\\Factorio_x64_1.0.0\\Factorio_1.0.0"
 }

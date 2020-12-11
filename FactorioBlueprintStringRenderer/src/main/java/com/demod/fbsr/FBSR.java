@@ -36,6 +36,8 @@ import javax.imageio.ImageIO;
 
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.demod.factorio.DataTable;
 import com.demod.factorio.FactorioData;
@@ -58,7 +60,8 @@ import com.google.common.collect.Multiset;
 import com.google.common.collect.Table;
 
 public class FBSR {
-
+	private static final Logger log = LoggerFactory.getLogger(FBSR.class);
+	
 	private static class EntityRenderingTuple {
 		BlueprintEntity entity;
 		EntityPrototype prototype;
@@ -99,14 +102,18 @@ public class FBSR {
 		items.put(itemName, amount);
 	}
 
+	// Used before MapVersion(0, 18, 37, 3)
 	private static void alignRenderingTuplesToGrid(List<EntityRenderingTuple> entityRenderingTuples,
 			List<TileRenderingTuple> tileRenderingTuples) {
 		Multiset<Boolean> xAligned = LinkedHashMultiset.create();
 		Multiset<Boolean> yAligned = LinkedHashMultiset.create();
 
+		boolean anyRails = false;
+
 		for (EntityRenderingTuple tuple : entityRenderingTuples) {
 			if (tuple.entity.getName().equals("straight-rail") || tuple.entity.getName().equals("curved-rail")) {
-				continue; // XXX
+				anyRails = true; // no entity shifting if there are rails
+				break;
 			}
 
 			Point2D.Double pos = tuple.entity.getPosition();
@@ -130,21 +137,6 @@ public class FBSR {
 			xAligned.add(((w / 2) % 2 == 0) == (x % 2 == 0));
 			yAligned.add(((h / 2) % 2 == 0) == (y % 2 == 0));
 		}
-		for (TileRenderingTuple tuple : tileRenderingTuples) {
-			Point2D.Double pos = tuple.tile.getPosition();
-			Rectangle2D.Double bounds = new Rectangle2D.Double(pos.x - 0.5, pos.y - 0.5, 1.0, 1.0);
-
-			// Everything is doubled and rounded to the closest original 0.5
-			// increment
-			long x = Math.round(bounds.getCenterX() * 2);
-			long y = Math.round(bounds.getCenterY() * 2);
-			long w = Math.round(bounds.width * 2);
-			long h = Math.round(bounds.height * 2);
-
-			// If size/2 is odd, pos should be odd, and vice versa
-			xAligned.add(((w / 2) % 2 == 0) == (x % 2 == 0));
-			yAligned.add(((h / 2) % 2 == 0) == (y % 2 == 0));
-		}
 
 		// System.out.println("X ALIGNED: " + xAligned.count(true) + " yes, " +
 		// xAligned.count(false) + " no");
@@ -153,7 +145,7 @@ public class FBSR {
 
 		boolean shiftX = xAligned.count(true) < xAligned.count(false);
 		boolean shiftY = yAligned.count(true) < yAligned.count(false);
-		if (shiftX || shiftY) {
+		if (!anyRails && (shiftX || shiftY)) {
 			// System.out.println("SHIFTING!");
 			for (EntityRenderingTuple tuple : entityRenderingTuples) {
 				Point2D.Double position = tuple.entity.getPosition();
@@ -164,15 +156,23 @@ public class FBSR {
 					position.y += 0.5;
 				}
 			}
-			for (TileRenderingTuple tuple : tileRenderingTuples) {
-				Point2D.Double position = tuple.tile.getPosition();
-				if (shiftX) {
-					position.x += 0.5;
-				}
-				if (shiftY) {
-					position.y += 0.5;
-				}
-			}
+		}
+
+		// Always shift tiles
+		for (TileRenderingTuple tuple : tileRenderingTuples) {
+			Point2D.Double position = tuple.tile.getPosition();
+			position.x += 0.5;
+			position.y += 0.5;
+		}
+
+	}
+
+	// Used since MapVersion(0, 18, 37, 3), due to game-internal bp string changes
+	private static void alignTileRenderingTuplesToGrid(List<TileRenderingTuple> tileRenderingTuples) {
+		for (TileRenderingTuple tuple : tileRenderingTuples) {
+			Point2D.Double position = tuple.tile.getPosition();
+			position.x += 0.5;
+			position.y += 0.5;
 		}
 	}
 
@@ -271,10 +271,14 @@ public class FBSR {
 
 		int imageWidth = (int) (totalBounds.getWidth() * worldRenderScale * tileSize);
 		int imageHeight = (int) (totalBounds.getHeight() * worldRenderScale * tileSize);
-		System.out.println("\t" + imageWidth + "x" + imageHeight + " (" + worldRenderScale + ")");
+		log.trace("\t" + imageWidth + "x" + imageHeight + " (" + worldRenderScale + ")");
 
 		BufferedImage image = new BufferedImage(imageWidth, imageHeight, BufferedImage.TYPE_INT_RGB);
 		Graphics2D g = image.createGraphics();
+
+		BufferedImage shadowImage = new BufferedImage(imageWidth, imageHeight, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D shadowG = shadowImage.createGraphics();
+		AffineTransform noXform = g.getTransform();
 
 		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 		g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
@@ -282,6 +286,10 @@ public class FBSR {
 		g.scale(image.getWidth() / totalBounds.getWidth(), image.getHeight() / totalBounds.getHeight());
 		g.translate(-totalBounds.getX(), -totalBounds.getY());
 		AffineTransform worldXform = g.getTransform();
+
+		shadowG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+		shadowG.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+		shadowG.setTransform(worldXform);
 
 		// Background
 		g.setColor(GROUND_COLOR);
@@ -296,6 +304,27 @@ public class FBSR {
 		for (double y = Math.round(worldBounds.getMinY()); y <= worldBounds.getMaxY(); y++) {
 			g.draw(new Line2D.Double(worldBounds.getMinX(), y, worldBounds.getMaxX(), y));
 		}
+
+		renderers.stream().filter(r -> r instanceof EntityRenderer).map(r -> (EntityRenderer) r).forEach(r -> {
+			try {
+				r.renderShadows(shadowG);
+			} catch (Exception e) {
+				reporting.addException(e);
+			}
+		});
+		shadowG.dispose();
+		RenderUtils.halveAlpha(shadowImage);
+
+		renderers.add(new Renderer(Layer.SHADOW_BUFFER, worldBounds) {
+			@Override
+			public void render(Graphics2D g) throws Exception {
+				AffineTransform tempXform = g.getTransform();
+				g.setTransform(noXform);
+				g.drawImage(shadowImage, 0, 0, null);
+
+				g.setTransform(tempXform);
+			}
+		});
 
 		boolean debugBounds = reporting.getDebug().map(d -> d.bounds).orElse(false);
 		renderers.stream().sorted((r1, r2) -> {
@@ -466,7 +495,6 @@ public class FBSR {
 				String footerMessage;
 				if (width > 5.5) {
 					footerMessage = "Made by BlueprintBot - Factorio " + getVersion();
-					//footerMessage = "Made by Factorio.Design - Factorio " + getVersion();
 				} else {
 					footerMessage = "BlueprintBot";
 				}
@@ -893,9 +921,6 @@ public class FBSR {
 
 	}
 
-	/**
-	 * This is the main entry point for rendering a blueprint.
-	 */
 	public static BufferedImage renderBlueprint(Blueprint blueprint, TaskReporting reporting)
 			throws JSONException, IOException {
 		return renderBlueprint(blueprint, reporting, new JSONObject());
@@ -903,7 +928,7 @@ public class FBSR {
 
 	public static BufferedImage renderBlueprint(Blueprint blueprint, TaskReporting reporting, JSONObject options)
 			throws JSONException, IOException {
-		System.out.println("Rendering " + blueprint.getLabel().orElse("(No Name)"));
+		log.trace("Rendering " + blueprint.getLabel().orElse("(No Name)"));
 		long startMillis = System.currentTimeMillis();
 
 		DataTable table = FactorioData.getTable();
@@ -952,7 +977,10 @@ public class FBSR {
 			tileRenderingTuples.add(tuple);
 		}
 
-		alignRenderingTuplesToGrid(entityRenderingTuples, tileRenderingTuples);
+		if (blueprint.getVersion().greaterOrEquals(new MapVersion(0, 18, 37, 3)))
+			alignTileRenderingTuplesToGrid(tileRenderingTuples);
+		else // legacy
+			alignRenderingTuplesToGrid(entityRenderingTuples, tileRenderingTuples);
 
 		entityRenderingTuples.forEach(t -> {
 			try {
@@ -1063,7 +1091,7 @@ public class FBSR {
 		BufferedImage result = applyRendering(reporting, (int) Math.round(tileSize), renderers, borderPanels, options);
 
 		long endMillis = System.currentTimeMillis();
-		System.out.println("\tRender Time " + (endMillis - startMillis) + " ms");
+		log.trace("\tRender Time {} ms", (endMillis - startMillis));
 		reporting.addRenderTime(endMillis - startMillis);
 
 		return result;

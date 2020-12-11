@@ -12,11 +12,16 @@ import com.demod.fbsr.Renderer;
 import com.demod.fbsr.Sprite;
 import com.demod.fbsr.WorldMap;
 
-public class PowerSwitchRendering extends EntityRendererFactory {
+public class TurretRendering extends EntityRendererFactory {
 	@Override
 	public void createRenderers(Consumer<Renderer> register, WorldMap map, DataTable dataTable, BlueprintEntity entity,
 			EntityPrototype prototype) {
-		List<Sprite> sprites = RenderUtils.getSpritesFromAnimation(prototype.lua().get("power_on_animation"));
-		register.accept(RenderUtils.spriteRenderer(sprites, entity, prototype));
+		List<Sprite> baseSprites = RenderUtils.getSpritesFromAnimation(prototype.lua().get("base_picture"));
+		register.accept(RenderUtils.spriteRenderer(baseSprites, entity, prototype));
+
+		List<Sprite> turretSprites = RenderUtils.getSpritesFromAnimation(prototype.lua().get("folded_animation"));
+		turretSprites.forEach(s -> s.source.y = s.source.height * entity.getDirection().cardinal());
+		register.accept(RenderUtils.spriteRenderer(turretSprites, entity, prototype));
 	}
+
 }

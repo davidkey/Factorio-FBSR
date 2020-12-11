@@ -5,9 +5,11 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.zip.DeflaterOutputStream;
 import java.util.zip.InflaterInputStream;
 
@@ -55,7 +57,7 @@ public class BlueprintStringData {
 	private final JSONObject json;
 
 	private final Optional<String> label;
-	private final Optional<Long> version;
+	private final MapVersion version;
 
 	public BlueprintStringData(String blueprintString) throws IllegalArgumentException, IOException {
 		String versionChar = blueprintString.substring(0, 1);
@@ -69,31 +71,48 @@ public class BlueprintStringData {
 
 		json = decode(blueprintString);
 
-		if (json.has("blueprint")) {
-			Blueprint blueprint = new Blueprint(json);
-			blueprints.add(blueprint);
+		boolean first = true;
+		Optional<String> firstLabel = null;
+		MapVersion firstVersion = null;
 
-			label = blueprint.getLabel();
-			version = blueprint.getVersion();
-		} else {
-			JSONObject bookJson = json.getJSONObject("blueprint_book");
-			JSONArray blueprintsJson = bookJson.getJSONArray("blueprints");
-			for (int i = 0; i < blueprintsJson.length(); i++) {
-				Blueprint blueprint = new Blueprint(blueprintsJson.getJSONObject(i));
+		Queue<JSONObject> work = new ArrayDeque<>();
+		work.add(json);
+		while (!work.isEmpty()) {
+			JSONObject json = work.poll();
+			if (json.has("blueprint")) {
+				Blueprint blueprint = new Blueprint(json);
 				blueprints.add(blueprint);
-			}
 
-			if (bookJson.has("label")) {
-				label = Optional.of(bookJson.getString("label"));
-			} else {
-				label = Optional.empty();
-			}
-			if (bookJson.has("version")) {
-				version = Optional.of(bookJson.getLong("version"));
-			} else {
-				version = Optional.empty();
+				if (first) {
+					firstLabel = blueprint.getLabel();
+					firstVersion = blueprint.getVersion();
+					first = false;
+				}
+
+			} else if (json.has("blueprint_book")) {
+				JSONObject bookJson = json.getJSONObject("blueprint_book");
+				JSONArray blueprintsJson = bookJson.getJSONArray("blueprints");
+				for (int i = 0; i < blueprintsJson.length(); i++) {
+					work.add(blueprintsJson.getJSONObject(i));
+				}
+
+				if (first) {
+					if (bookJson.has("label")) {
+						firstLabel = Optional.of(bookJson.getString("label"));
+					} else {
+						firstLabel = Optional.empty();
+					}
+					if (bookJson.has("version")) {
+						firstVersion = new MapVersion(bookJson.getLong("version"));
+					} else {
+						firstVersion = new MapVersion();
+					}
+					first = false;
+				}
 			}
 		}
+		label = firstLabel;
+		version = firstVersion;
 
 		if (blueprints.isEmpty()) {
 			throw new IllegalArgumentException("No blueprints found in blueprint string!");
@@ -108,7 +127,7 @@ public class BlueprintStringData {
 		return label;
 	}
 
-	public Optional<Long> getVersion() {
+	public MapVersion getVersion() {
 		return version;
 	}
 
